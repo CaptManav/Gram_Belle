@@ -27,18 +27,19 @@ if "%GROQ_API_KEY%"=="" (
 )
 
 echo [Gram Belle] Using Python: %PYTHON_EXE%
-echo [Gram Belle] Opening UI at http://127.0.0.1:8000/
+echo [Gram Belle] Starting server in a new window...
+start "Gram Belle Server" cmd /k "\"%PYTHON_EXE%\" -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload"
+
+timeout /t 2 /nobreak >nul
+
+echo [Gram Belle] Starting agent_v1.py in a new window...
+start "Gram Belle Agent" cmd /k "\"%PYTHON_EXE%\" agent_v1.py"
+
+timeout /t 2 /nobreak >nul
+
+echo [Gram Belle] Opening frontend at http://127.0.0.1:8000/
 start "" "http://127.0.0.1:8000/"
 
-echo [Gram Belle] Starting server... Press Ctrl+C to stop.
-"%PYTHON_EXE%" -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
-
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Failed to start server.
-    echo Ensure dependencies are installed in your current environment.
-    pause
-    exit /b 1
-)
+echo [Gram Belle] Launched. Use each window to stop individual processes.
 
 endlocal

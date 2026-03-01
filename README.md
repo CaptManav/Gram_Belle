@@ -11,7 +11,7 @@ This repository currently contains Python prototypes for:
 
 ## Project Structure
 
-- `server.py`: FastAPI API that accepts uploaded audio and returns `{text, audio_base64}`.
+- `server.py`: FastAPI API for frontend voice turns (`/talk`).
 - `brain_gemini.py`: Groq chat wrapper (`llama-3.1-8b-instant`) and system prompt.
 - `ui.py`: Gradio continuous voice interface (VAD-like loop + local Whisper + XTTS).
 - `agent_v1.py`: local loop version of voice chat (record -> transcribe -> reply -> speak).
@@ -23,7 +23,6 @@ This repository currently contains Python prototypes for:
 ## Requirements
 
 - Python 3.10+ (recommended)
-- FFmpeg installed (needed by `pydub` in `server.py`)
 - Working microphone/speaker device
 - NVIDIA CUDA setup if you want GPU acceleration for Whisper/XTTS
 
@@ -33,9 +32,11 @@ Create a `.env` file in the project root:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
+STREAMELEMENTS_API_KEY=your_streamelements_api_key_here
 ```
 
-`brain_gemini.py` and `server.py` expect `GROQ_API_KEY`.
+`GROQ_API_KEY` is required.  
+`STREAMELEMENTS_API_KEY` is optional for cloud TTS. If missing, the frontend falls back to browser speech synthesis.
 
 ## Setup
 
@@ -49,7 +50,7 @@ python -m venv .venv
 2. Install packages:
 
 ```powershell
-pip install fastapi uvicorn requests pydub python-multipart
+pip install fastapi uvicorn requests python-multipart
 pip install groq python-dotenv
 pip install gradio numpy sounddevice soundfile webrtcvad
 pip install faster-whisper
@@ -69,7 +70,8 @@ Double-click:
 It will:
 - load variables from `.env`,
 - use `.venv` (or `venv`) automatically if found,
-- start `uvicorn`,
+- start `uvicorn` in one window,
+- start `agent_v1.py` in another window,
 - open `http://127.0.0.1:8000/` in your browser.
 
 ### 1) FastAPI server
@@ -119,5 +121,6 @@ python tts_test.py
 ## Known Notes
 
 - The current assistant personality is defined in `brain_gemini.py` (`SYSTEM_PROMPT`).
-- `server.py` uses Groq Whisper for STT and a public StreamElements endpoint for TTS output.
+- `server.py` uses Groq Whisper for STT and `brain_gemini.reply()` for LLM replies (same reply path as `agent_v1.py`).
+- Frontend continuous mode uses fixed 10-second turns like `agent_v1.py` (listen -> transcribe -> reply -> speak -> repeat).
 - Generated audio files (`*.wav`) and `.env` are ignored by Git.

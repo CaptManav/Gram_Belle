@@ -144,12 +144,27 @@ h1 {
   animation: pulse 1s ease-in-out infinite;
 }
 
+.status-listening {
+  background: var(--orange);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+
+.status-speaking {
+  background: #3e7a4a;
+  animation: pulse 0.95s ease-in-out infinite;
+}
+
 .status-error {
   background: #b02921;
 }
 
-.record-btn {
-  width: 100%;
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.control-btn {
   border: 0;
   border-radius: 0.9rem;
   padding: 0.9rem 1.2rem;
@@ -163,35 +178,37 @@ h1 {
   box-shadow: 0 8px 24px rgba(7, 88, 90, 0.3);
 }
 
-.record-btn:hover {
+.control-btn:hover {
   transform: translateY(-1px);
   filter: saturate(1.1);
 }
 
-.record-btn:active {
+.control-btn:active {
   transform: translateY(0);
 }
 
-.record-btn.recording {
+.control-btn.stop {
+  background: linear-gradient(135deg, #8d2e1f, #b94f2a);
+  box-shadow: 0 8px 24px rgba(142, 53, 31, 0.35);
+}
+
+.control-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+  transform: none;
+  box-shadow: none;
+}
+
+.control-btn.start.running {
   background: linear-gradient(135deg, #b94f2a, var(--orange));
   box-shadow: 0 8px 24px rgba(181, 84, 46, 0.35);
 }
 
-.base-url {
-  display: grid;
-  gap: 0.42rem;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.85rem;
+.hint {
+  margin: 0;
+  font-size: 0.9rem;
   color: var(--muted);
-}
-
-.base-url input {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 0.55rem;
-  padding: 0.55rem 0.7rem;
-  background: #fffdf6;
-  font-family: "IBM Plex Mono", monospace;
 }
 
 .output {
@@ -325,5 +342,9 @@ h2 {
   .output,
   .timeline-panel {
     padding: 0.85rem;
+  }
+
+  .button-row {
+    grid-template-columns: 1fr;
   }
 }

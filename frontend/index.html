@@ -17,8 +17,8 @@
   <main class="app-shell">
     <header class="hero reveal delay-1">
       <p class="eyebrow">Gram Belle</p>
-      <h1>Talk. Roast. Learn.</h1>
-      <p class="subtext">Record your voice, send it to the assistant, and hear the reply instantly.</p>
+      <h1>Continuous Voice Mode</h1>
+      <p class="subtext">Works like <code>agent_v1.py</code>: listen, transcribe, reply, speak, repeat.</p>
     </header>
 
     <section class="panel controls reveal delay-2">
@@ -27,12 +27,12 @@
         <p id="statusText">Idle</p>
       </div>
 
-      <button id="recordBtn" class="record-btn" type="button">Start Recording</button>
+      <div class="button-row">
+        <button id="startBtn" class="control-btn start" type="button">Start Conversation</button>
+        <button id="stopBtn" class="control-btn stop" type="button" disabled>Stop</button>
+      </div>
 
-      <label class="base-url" for="apiBaseUrl">
-        API Base URL
-        <input id="apiBaseUrl" type="text" placeholder="Same origin (default)">
-      </label>
+      <p class="hint">Each turn listens for about 10 seconds, then sends automatically.</p>
     </section>
 
     <section class="panel output reveal delay-3">
