@@ -61,6 +61,17 @@ Note: depending on your machine, `torch`, `TTS`, and `faster-whisper` may need s
 
 ## Run
 
+### One-click launch (Windows)
+
+Double-click:
+- `start_gram_belle.bat`
+
+It will:
+- load variables from `.env`,
+- use `.venv` (or `venv`) automatically if found,
+- start `uvicorn`,
+- open `http://127.0.0.1:8000/` in your browser.
+
 ### 1) FastAPI server
 
 ```powershell
