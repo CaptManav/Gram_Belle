@@ -3,6 +3,7 @@ import base64
 import tempfile
 import time
 import threading
+import inspect
 from pathlib import Path
 
 import requests
@@ -17,9 +18,18 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not set")
 
+def env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
 STREAMELEMENTS_API_KEY = os.getenv("STREAMELEMENTS_API_KEY", "").strip()
 USE_LOCAL_XTTS = os.getenv("USE_LOCAL_XTTS", "1").strip().lower() not in {"0", "false", "no"}
 XTTS_LANGUAGE = os.getenv("XTTS_LANGUAGE", "en").strip() or "en"
+XTTS_PRELOAD_ON_START = os.getenv("XTTS_PRELOAD_ON_START", "1").strip().lower() not in {"0", "false", "no"}
+XTTS_SPEED = max(0.8, min(2.0, env_float("XTTS_SPEED", 1.2)))
 
 app = FastAPI()
 app.add_middleware(
@@ -65,6 +75,7 @@ _xtts_lock = threading.Lock()
 _xtts_model = None
 _xtts_speaker = None
 _xtts_init_error = ""
+_xtts_supports_speed = False
 
 
 def groq_headers():
@@ -114,7 +125,7 @@ def clean_text_for_tts(text: str) -> str:
 
 
 def get_xtts():
-    global _xtts_model, _xtts_speaker, _xtts_init_error
+    global _xtts_model, _xtts_speaker, _xtts_init_error, _xtts_supports_speed
 
     if not USE_LOCAL_XTTS:
         return None, "", "Local XTTS is disabled (USE_LOCAL_XTTS=0)."
@@ -141,26 +152,20 @@ def get_xtts():
             # Keep compatibility with newer torch safe deserialization defaults.
             torch.serialization.add_safe_globals([XttsAudioConfig, XttsConfig])
 
-            last_error = None
-            for use_gpu in [torch.cuda.is_available(), False]:
-                try:
-                    model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=use_gpu)
-                    if use_gpu:
-                        model = model.to("cuda")
+            has_cuda = torch.cuda.is_available()
+            if not has_cuda:
+                _xtts_init_error = "Local XTTS requires CUDA GPU, but CUDA is not available."
+                return None, "", _xtts_init_error
 
-                    speaker_manager = model.synthesizer.tts_model.speaker_manager
-                    speaker = list(speaker_manager.speakers.keys())[0]
+            model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=True)
+            model = model.to("cuda")
+            speaker_manager = model.synthesizer.tts_model.speaker_manager
+            speaker = list(speaker_manager.speakers.keys())[0]
+            _xtts_supports_speed = "speed" in inspect.signature(model.tts_to_file).parameters
 
-                    _xtts_model = model
-                    _xtts_speaker = speaker
-                    return _xtts_model, _xtts_speaker, ""
-                except Exception as exc:
-                    last_error = exc
-                    if not use_gpu:
-                        break
-
-            _xtts_init_error = f"Local XTTS init failed: {last_error}"
-            return None, "", _xtts_init_error
+            _xtts_model = model
+            _xtts_speaker = speaker
+            return _xtts_model, _xtts_speaker, ""
         except Exception as exc:
             _xtts_init_error = f"Local XTTS init failed: {exc}"
             return None, "", _xtts_init_error
@@ -175,12 +180,16 @@ def synthesize_local_xtts(reply_text: str) -> tuple[str, str]:
     os.close(out_fd)
 
     try:
-        model.tts_to_file(
-            text=clean_text_for_tts(reply_text),
-            file_path=out_path,
-            speaker=speaker,
-            language=XTTS_LANGUAGE,
-        )
+        tts_kwargs = {
+            "text": clean_text_for_tts(reply_text),
+            "file_path": out_path,
+            "speaker": speaker,
+            "language": XTTS_LANGUAGE,
+        }
+        if _xtts_supports_speed:
+            tts_kwargs["speed"] = XTTS_SPEED
+
+        model.tts_to_file(**tts_kwargs)
         with open(out_path, "rb") as audio_file:
             wav_bytes = audio_file.read()
 
@@ -231,6 +240,16 @@ def synthesize_tts(reply_text: str) -> tuple[str, str]:
             cloud_error = f"{audio_error} | {cloud_error}"
         return "", cloud_error
 
+def preload_xtts_background() -> None:
+    if not USE_LOCAL_XTTS or not XTTS_PRELOAD_ON_START:
+        return
+
+    def _worker():
+        # Trigger one-time lazy init in background.
+        get_xtts()
+
+    threading.Thread(target=_worker, name="xtts-preload", daemon=True).start()
+
 
 @app.get("/")
 def home():
@@ -245,9 +264,16 @@ def health():
     return {"ok": True}
 
 
+@app.on_event("startup")
+def startup_event():
+    preload_xtts_background()
+
+
 @app.post("/talk")
 async def talk(file: UploadFile = File(...)):
     in_path = None
+    t0 = time.perf_counter()
+    t_stt = t0
 
     data = await file.read()
     await file.close()
@@ -274,12 +300,24 @@ async def talk(file: UploadFile = File(...)):
             )
         stt.raise_for_status()
         user_text = stt.json()["text"]
+        t_stt = time.perf_counter()
 
         # 3) LLM reply - identical path used by agent_v1.py
         reply_text = reply(user_text)
+        t_llm = time.perf_counter()
 
         # 4) Text-to-Speech (best-effort)
         audio_b64, audio_error = synthesize_tts(reply_text)
+        t_tts = time.perf_counter()
+
+        print(
+            f"[talk] stt={t_stt - t0:.2f}s "
+            f"llm={t_llm - t_stt:.2f}s "
+            f"tts={t_tts - t_llm:.2f}s "
+            f"total={t_tts - t0:.2f}s "
+            f"reply_chars={len(reply_text)} "
+            f"xtts_speed={XTTS_SPEED}"
+        )
 
         return {
             "transcript": user_text,
