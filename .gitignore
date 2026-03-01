@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment/secrets
+.env
+.env.*
+
+# Generated audio artifacts
+*.wav
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
