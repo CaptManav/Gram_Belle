@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gram Belle Voice Frontend</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+  <div class="grid-mask" aria-hidden="true"></div>
+
+  <main class="app-shell">
+    <header class="hero reveal delay-1">
+      <p class="eyebrow">Gram Belle</p>
+      <h1>Talk. Roast. Learn.</h1>
+      <p class="subtext">Record your voice, send it to the assistant, and hear the reply instantly.</p>
+    </header>
+
+    <section class="panel controls reveal delay-2">
+      <div class="status-wrap">
+        <span class="status-dot status-idle" id="statusDot"></span>
+        <p id="statusText">Idle</p>
+      </div>
+
+      <button id="recordBtn" class="record-btn" type="button">Start Recording</button>
+
+      <label class="base-url" for="apiBaseUrl">
+        API Base URL
+        <input id="apiBaseUrl" type="text" placeholder="Same origin (default)">
+      </label>
+    </section>
+
+    <section class="panel output reveal delay-3">
+      <div class="block">
+        <h2>Transcript</h2>
+        <p id="userText" class="placeholder">No transcript yet.</p>
+      </div>
+
+      <div class="block">
+        <h2>Assistant Reply</h2>
+        <p id="botText" class="placeholder">No response yet.</p>
+      </div>
+
+      <audio id="replyAudio" controls preload="none"></audio>
+    </section>
+
+    <section class="panel timeline-panel reveal delay-4">
+      <h2>Session Log</h2>
+      <ul id="timeline" class="timeline"></ul>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

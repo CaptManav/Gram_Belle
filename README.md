@@ -67,6 +67,9 @@ Note: depending on your machine, `torch`, `TTS`, and `faster-whisper` may need s
 uvicorn server:app --reload --host 0.0.0.0 --port 8000
 ```
 
+Open the frontend at:
+- `http://127.0.0.1:8000/`
+
 Endpoint:
 - `POST /talk` with multipart field `file` (audio input).
 
