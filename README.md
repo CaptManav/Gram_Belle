@@ -1,4 +1,4 @@
-# Gram_Belle
+# Gram_Belle (The Sassy Tutor)
 
 Voice-first AI assistant experiments using Groq, Whisper, and XTTS.
 
