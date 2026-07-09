@@ -31,15 +31,24 @@ if "%XTTS_PRELOAD_ON_START%"=="" set "XTTS_PRELOAD_ON_START=1"
 
 echo [Gram Belle] Using Python: %PYTHON_EXE%
 echo [Gram Belle] XTTS speed: %XTTS_SPEED%
-echo [Gram Belle] Starting server in a new window...
-start "Gram Belle Server" cmd /k ""%PYTHON_EXE%" -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload"
+echo [Gram Belle] Starting server in a new window (bound to 0.0.0.0 for phone access)...
+start "Gram Belle Server" cmd /k ""%PYTHON_EXE%" -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload"
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
-echo [Gram Belle] Opening frontend at http://127.0.0.1:8000/
+echo [Gram Belle] Local Network URLs:
+for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /R /C:"IPv4 Address"') do (
+    set "IP=%%i"
+    set "IP=!IP:~1!"
+    echo     http://!IP!:8000/
+)
+echo     http://127.0.0.1:8000/
+
+echo.
+echo [Gram Belle] Opening local frontend...
 start "" "http://127.0.0.1:8000/"
 
-echo [Gram Belle] Launched. Server and frontend are running.
-echo [Gram Belle] If you also want terminal mode, run: "%PYTHON_EXE%" agent_v1.py
+echo [Gram Belle] Launched. Server is running on all interfaces.
+echo [Gram Belle] Enter one of the network IP URLs shown above into your phone app.
 
 endlocal

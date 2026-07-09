@@ -3,57 +3,201 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gram Belle Voice Frontend</title>
+  <title>Gram Belle – Minimalist Voice Assistant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <div class="orb orb-a" aria-hidden="true"></div>
-  <div class="orb orb-b" aria-hidden="true"></div>
-  <div class="grid-mask" aria-hidden="true"></div>
+  <!-- Aesthetic Aero background waves & floating shapes -->
+  <div class="sky-background" aria-hidden="true">
+    <div class="bubble bubble-1"></div>
+    <div class="bubble bubble-2"></div>
+    <div class="aurora-wave"></div>
+  </div>
 
-  <main class="app-shell">
-    <header class="hero reveal delay-1">
-      <p class="eyebrow">Gram Belle</p>
-      <h1>Continuous Voice Mode</h1>
-      <p class="subtext">Works like <code>agent_v1.py</code>: listen, transcribe, reply, speak, repeat.</p>
+  <!-- Left Sidebar: Configuration Settings -->
+  <aside id="settingsSidebar" class="sidebar sidebar-left">
+    <div class="sidebar-header">
+      <h2>Configuration</h2>
+      <button id="settingsCloseBtn" class="sidebar-close-btn" aria-label="Close settings" type="button">&times;</button>
+    </div>
+
+    <div class="sidebar-body">
+      <!-- Dark Mode -->
+      <div class="settings-group">
+        <div class="toggle-control">
+          <span>Dark Theme</span>
+          <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- TTS Engine -->
+      <div class="settings-group">
+        <label class="group-label">Voice Engine</label>
+        <div class="radio-pill-group">
+          <label class="radio-pill">
+            <input type="radio" name="tts_engine" value="browser" checked>
+            <span class="pill-label">Browser (Instant)</span>
+          </label>
+          <label class="radio-pill">
+            <input type="radio" name="tts_engine" value="edge_tts">
+            <span class="pill-label">Edge TTS (Cloud)</span>
+          </label>
+          <label class="radio-pill">
+            <input type="radio" name="tts_engine" value="local_xtts">
+            <span class="pill-label">Local XTTS (Clone)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- VAD sliders -->
+      <div class="settings-group">
+        <label for="vadThreshold" class="group-label">Speech Sensitivity</label>
+        <div class="slider-row">
+          <input type="range" id="vadThreshold" min="0.005" max="0.08" step="0.005" value="0.015">
+          <span id="vadThresholdVal" class="value-badge">0.015</span>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <label for="silenceDuration" class="group-label">Silence Timeout</label>
+        <div class="slider-row">
+          <input type="range" id="silenceDuration" min="500" max="2500" step="100" value="1000">
+          <span id="silenceDurationVal" class="value-badge">1000ms</span>
+        </div>
+      </div>
+
+      <!-- TTS Speed -->
+      <div class="settings-group">
+        <label for="ttsSpeed" class="group-label">Voice Speed</label>
+        <div class="slider-row">
+          <input type="range" id="ttsSpeed" min="0.8" max="1.8" step="0.1" value="1.2">
+          <span id="ttsSpeedVal" class="value-badge">1.2x</span>
+        </div>
+      </div>
+
+      <!-- Reset -->
+      <div class="settings-group actions-group">
+        <button id="resetSessionBtn" class="danger-btn" type="button">Reset Memory</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Sidebar: Grammar Feedback Details -->
+  <aside id="feedbackSidebar" class="sidebar sidebar-right">
+    <div class="sidebar-header">
+      <h2>Grammar Check</h2>
+      <button id="feedbackCloseBtn" class="sidebar-close-btn" aria-label="Close feedback" type="button">&times;</button>
+    </div>
+
+    <div class="sidebar-body">
+      <div id="dashboardEmptyState" class="dashboard-empty-state">
+        <div class="empty-icon">🫧</div>
+        <p>No feedback generated yet. Speak a sentence to test your grammar.</p>
+      </div>
+
+      <div id="dashboardContent" class="dashboard-content" style="display: none;">
+        <!-- Roast Card -->
+        <div class="analysis-card roast-card">
+          <div class="card-badge roast-badge">Feedback</div>
+          <blockquote id="cardRoast">"Roast text goes here."</blockquote>
+        </div>
+
+        <!-- Correction Card -->
+        <div class="analysis-card correction-card">
+          <div class="card-badge correction-badge">Correction</div>
+          <div class="diff-block">
+            <div class="diff-line diff-bad">
+              <span class="diff-marker">-</span>
+              <span id="cardOriginal" class="diff-text">Original error text.</span>
+            </div>
+            <div class="diff-line diff-good">
+              <span class="diff-marker">+</span>
+              <span id="cardCorrection" class="diff-text">Corrected version text.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Explanation Card -->
+        <div class="analysis-card explanation-card">
+          <div class="card-badge explanation-badge">Explanation</div>
+          <p id="cardExplanation">Explanation detail text.</p>
+        </div>
+
+        <!-- Challenge Card -->
+        <div class="analysis-card challenge-card">
+          <div class="card-badge challenge-badge">Next Try</div>
+          <p id="cardChallenge">Challenge prompt.</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Console Shell -->
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header reveal">
+      <!-- Left: Settings gear toggle -->
+      <button id="settingsToggleBtn" class="icon-btn" aria-label="Open settings" type="button">
+        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+
+      <!-- Center: Brand -->
+      <div class="brand">
+        <span class="logo-orb"></span>
+        <span class="logo-text">Gram Belle</span>
+      </div>
+
+      <!-- Right: Feedback toggle -->
+      <button id="feedbackToggleBtn" class="menu-toggle-btn" type="button">
+        <span id="feedbackDot" class="notification-dot" style="display: none;"></span>
+        <span class="btn-text">Feedback</span>
+      </button>
     </header>
 
-    <section class="panel controls reveal delay-2">
-      <div class="status-wrap">
-        <span class="status-dot status-idle" id="statusDot"></span>
-        <p id="statusText">Idle</p>
+    <!-- Center Workspace Console -->
+    <main class="console-workspace">
+      <!-- Interactive Liquid Orb Panel -->
+      <div class="glass-card orb-panel reveal delay-1">
+        <div class="orb-wrapper">
+          <div class="orb-glow-layer" id="orbGlow"></div>
+          <button id="orbBtn" class="glass-bubble-orb orb-idle" type="button" aria-label="Start Conversation">
+            <span class="bubble-reflection"></span>
+            <span class="bubble-inner"></span>
+          </button>
+        </div>
+
+        <div class="status-indicator">
+          <span class="pulse-dot state-idle" id="statusDot"></span>
+          <span id="statusText" class="status-msg">Click bubble to start</span>
+        </div>
+
+        <div class="audio-controls" style="display: none;">
+          <audio id="replyAudio" preload="none"></audio>
+        </div>
       </div>
 
-      <div class="button-row">
-        <button id="startBtn" class="control-btn start" type="button">Start Conversation</button>
-        <button id="stopBtn" class="control-btn stop" type="button" disabled>Stop</button>
+      <!-- Live Chat Timeline (Aero Bubble Flow) -->
+      <div class="glass-card timeline-panel reveal delay-2">
+        <div class="chat-timeline-container">
+          <ul id="timeline" class="chat-timeline">
+            <li class="timeline-empty-state">No transcript yet. Click the bubble above and start talking.</li>
+          </ul>
+        </div>
       </div>
+    </main>
+  </div>
 
-      <p class="hint">Each turn listens for about 10 seconds, then sends automatically.</p>
-    </section>
-
-    <section class="panel output reveal delay-3">
-      <div class="block">
-        <h2>Transcript</h2>
-        <p id="userText" class="placeholder">No transcript yet.</p>
-      </div>
-
-      <div class="block">
-        <h2>Assistant Reply</h2>
-        <p id="botText" class="placeholder">No response yet.</p>
-      </div>
-
-      <audio id="replyAudio" controls preload="none"></audio>
-    </section>
-
-    <section class="panel timeline-panel reveal delay-4">
-      <h2>Session Log</h2>
-      <ul id="timeline" class="timeline"></ul>
-    </section>
-  </main>
+  <!-- Sidebars Overlay (for clicking outside to close sidebars) -->
+  <div id="sidebarsOverlay" class="sidebars-overlay"></div>
 
   <script src="/static/app.js"></script>
 </body>

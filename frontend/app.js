@@ -1,316 +1,547 @@
-const startBtn = document.getElementById("startBtn");
-const stopBtn = document.getElementById("stopBtn");
+// DOM Elements
+const orbBtn = document.getElementById("orbBtn");
+const orbGlow = document.getElementById("orbGlow");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-const userTextEl = document.getElementById("userText");
-const botTextEl = document.getElementById("botText");
 const timelineEl = document.getElementById("timeline");
 const replyAudioEl = document.getElementById("replyAudio");
 
-const TURN_SECONDS = 10;
-const TURN_MS = TURN_SECONDS * 1000;
-const MIN_AUDIO_BYTES = 1400;
+// Sidebars & Overlay
+const settingsSidebar = document.getElementById("settingsSidebar");
+const feedbackSidebar = document.getElementById("feedbackSidebar");
+const settingsToggleBtn = document.getElementById("settingsToggleBtn");
+const feedbackToggleBtn = document.getElementById("feedbackToggleBtn");
+const settingsCloseBtn = document.getElementById("settingsCloseBtn");
+const feedbackCloseBtn = document.getElementById("feedbackCloseBtn");
+const sidebarsOverlay = document.getElementById("sidebarsOverlay");
+const feedbackDot = document.getElementById("feedbackDot");
 
-let micStream = null;
+// Dashboard Elements
+const dashboardEmptyState = document.getElementById("dashboardEmptyState");
+const dashboardContent = document.getElementById("dashboardContent");
+const cardRoast = document.getElementById("cardRoast");
+const cardOriginal = document.getElementById("cardOriginal");
+const cardCorrection = document.getElementById("cardCorrection");
+const cardExplanation = document.getElementById("cardExplanation");
+const cardChallenge = document.getElementById("cardChallenge");
+
+// Settings
+const resetSessionBtn = document.getElementById("resetSessionBtn");
+const darkModeToggle = document.getElementById("darkModeToggle");
+const vadThresholdInput = document.getElementById("vadThreshold");
+const vadThresholdVal = document.getElementById("vadThresholdVal");
+const silenceDurationInput = document.getElementById("silenceDuration");
+const silenceDurationVal = document.getElementById("silenceDurationVal");
+const ttsSpeedInput = document.getElementById("ttsSpeed");
+const ttsSpeedVal = document.getElementById("ttsSpeedVal");
+
+// State Variables
 let running = false;
-let activeRecorder = null;
-let hasShownAudioNotice = false;
-let lastAudioUrl = null;
+let micStream = null;
+let audioCtx = null;
+let analyser = null;
+let micSource = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isSpeaking = false;
+let speechDetected = false;
+let silenceStart = null;
+let vadAnimationId = null;
 
-function setStatus(message, mode) {
-  statusText.textContent = message;
-  statusDot.className = "status-dot";
-  statusDot.classList.add(`status-${mode}`);
+// Configuration Defaults
+let vadThreshold = parseFloat(vadThresholdInput.value);
+let silenceDuration = parseInt(silenceDurationInput.value);
+let ttsSpeed = parseFloat(ttsSpeedInput.value);
+
+// Session Management
+let sessionId = sessionStorage.getItem("gram_belle_session_id");
+if (!sessionId) {
+  sessionId = "session_" + Math.random().toString(36).substring(2, 11);
+  sessionStorage.setItem("gram_belle_session_id", sessionId);
 }
 
-function addTimeline(role, text) {
-  const item = document.createElement("li");
-  const tag = document.createElement("span");
-  const body = document.createElement("p");
+// ----------------------------------------------------
+// Sidebar Navigation & Toggle Controls
+// ----------------------------------------------------
 
-  tag.className = "timeline-tag";
-  body.className = "timeline-text";
-
-  tag.textContent = role;
-  body.textContent = text;
-
-  item.appendChild(tag);
-  item.appendChild(body);
-  timelineEl.prepend(item);
+function openSidebar(sidebar) {
+  sidebar.classList.add("open");
+  sidebarsOverlay.classList.add("visible");
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+function closeAllSidebars() {
+  settingsSidebar.classList.remove("open");
+  feedbackSidebar.classList.remove("open");
+  sidebarsOverlay.classList.remove("visible");
 }
 
-function pickMimeType() {
-  if (!window.MediaRecorder) {
-    return "";
+settingsToggleBtn.addEventListener("click", () => {
+  if (settingsSidebar.classList.contains("open")) {
+    closeAllSidebars();
+  } else {
+    closeAllSidebars();
+    openSidebar(settingsSidebar);
   }
+});
 
-  const preferred = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-  ];
+feedbackToggleBtn.addEventListener("click", () => {
+  if (feedbackSidebar.classList.contains("open")) {
+    closeAllSidebars();
+  } else {
+    closeAllSidebars();
+    openSidebar(feedbackSidebar);
+    // Clear notification dot when feedback is viewed
+    feedbackDot.style.display = "none";
+  }
+});
 
-  for (const mimeType of preferred) {
-    if (MediaRecorder.isTypeSupported(mimeType)) {
-      return mimeType;
+settingsCloseBtn.addEventListener("click", closeAllSidebars);
+feedbackCloseBtn.addEventListener("click", closeAllSidebars);
+sidebarsOverlay.addEventListener("click", closeAllSidebars);
+
+// ----------------------------------------------------
+// Settings & Theme Preferences
+// ----------------------------------------------------
+
+// Load and handle Dark Theme
+const savedTheme = localStorage.getItem("theme") || "light";
+if (savedTheme === "dark") {
+  document.body.classList.add("dark-theme");
+  darkModeToggle.checked = true;
+}
+
+darkModeToggle.addEventListener("change", (e) => {
+  if (e.target.checked) {
+    document.body.classList.add("dark-theme");
+    localStorage.setItem("theme", "dark");
+  } else {
+    document.body.classList.remove("dark-theme");
+    localStorage.setItem("theme", "light");
+  }
+});
+
+// Update Sliders in UI
+vadThresholdInput.addEventListener("input", (e) => {
+  vadThreshold = parseFloat(e.target.value);
+  vadThresholdVal.textContent = vadThreshold.toFixed(3);
+});
+
+silenceDurationInput.addEventListener("input", (e) => {
+  silenceDuration = parseInt(e.target.value);
+  silenceDurationVal.textContent = silenceDuration + "ms";
+});
+
+ttsSpeedInput.addEventListener("input", (e) => {
+  ttsSpeed = parseFloat(e.target.value);
+  ttsSpeedVal.textContent = ttsSpeed.toFixed(1) + "x";
+});
+
+// Reset Session
+resetSessionBtn.addEventListener("click", async () => {
+  if (confirm("Are you sure you want to clear Gram Belle's memory for this session?")) {
+    try {
+      await fetch(`/reset?session_id=${sessionId}`, { method: "POST" });
+      timelineEl.innerHTML = '<li class="timeline-empty-state">Memory reset. Start speaking to log new transcripts.</li>';
+      dashboardEmptyState.style.display = "flex";
+      dashboardContent.style.display = "none";
+      addTimelineItem("sys", "Memory cleared.");
+      closeAllSidebars();
+    } catch (err) {
+      alert("Failed to reset session: " + err.message);
     }
   }
-  return "";
+});
+
+// ----------------------------------------------------
+// Helper Functions
+// ----------------------------------------------------
+
+function setOrbState(state) {
+  orbBtn.className = "glass-bubble-orb";
+  statusDot.className = "pulse-dot";
+  orbGlow.className = "orb-glow-layer";
+  
+  if (state === "idle") {
+    orbBtn.classList.add("orb-idle");
+    statusDot.classList.add("state-idle");
+    orbGlow.classList.add("state-idle");
+    statusText.textContent = "Click bubble to start";
+  } else if (state === "listening") {
+    orbBtn.classList.add("orb-recording");
+    statusDot.classList.add("state-listening");
+    orbGlow.classList.add("state-listening");
+    statusText.textContent = "Listening... speak now";
+  } else if (state === "working") {
+    orbBtn.classList.add("orb-working");
+    statusDot.classList.add("state-working");
+    orbGlow.classList.add("state-working");
+    statusText.textContent = "Thinking and analyzing...";
+  } else if (state === "speaking") {
+    orbBtn.classList.add("orb-speaking");
+    statusDot.classList.add("state-speaking");
+    orbGlow.classList.add("state-speaking");
+    statusText.textContent = "Gram Belle speaking";
+  } else if (state === "error") {
+    orbBtn.classList.add("orb-idle");
+    statusDot.classList.add("state-error");
+    orbGlow.classList.add("state-idle");
+    statusText.textContent = "Error. Click to retry.";
+  }
 }
 
-function mimeToExtension(mimeType) {
-  const lowered = (mimeType || "").toLowerCase();
-  if (lowered.includes("webm")) {
-    return "webm";
-  }
-  if (lowered.includes("ogg")) {
-    return "ogg";
-  }
-  if (lowered.includes("mp4") || lowered.includes("m4a")) {
-    return "m4a";
-  }
-  if (lowered.includes("wav")) {
-    return "wav";
-  }
-  return "webm";
+function addTimelineItem(role, text) {
+  const empty = timelineEl.querySelector(".timeline-empty-state");
+  if (empty) empty.remove();
+
+  const li = document.createElement("li");
+  li.className = `role-${role}`;
+
+  const meta = document.createElement("div");
+  meta.className = "timeline-meta";
+  meta.textContent = role === "user" ? "You" : role === "bot" ? "Gram Belle" : "System";
+
+  const content = document.createElement("div");
+  content.className = "timeline-content";
+  content.textContent = text;
+
+  li.appendChild(meta);
+  li.appendChild(content);
+  timelineEl.appendChild(li);
+
+  // Scroll
+  const container = timelineEl.parentElement;
+  container.scrollTop = container.scrollHeight;
+}
+
+function getSelectedTtsEngine() {
+  const selected = document.querySelector('input[name="tts_engine"]:checked');
+  return selected ? selected.value : "browser";
 }
 
 function base64ToBlob(base64Data, mimeType) {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i += 1) {
+  for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mimeType });
 }
 
-async function ensureMic() {
-  if (micStream) {
-    return;
-  }
+// ----------------------------------------------------
+// Voice Activity Detection (VAD) Loop
+// ----------------------------------------------------
 
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  });
-}
+function startVadLoop() {
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  
+  isSpeaking = false;
+  speechDetected = false;
+  silenceStart = null;
 
-async function recordTurn(durationMs) {
-  const mimeType = pickMimeType();
-  const chunks = [];
-  const recorder = mimeType
-    ? new MediaRecorder(micStream, { mimeType })
-    : new MediaRecorder(micStream);
+  function checkAudio() {
+    if (!running) return;
 
-  activeRecorder = recorder;
+    analyser.getByteTimeDomainData(dataArray);
+    
+    // Calculate RMS energy
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) {
+      let dev = (dataArray[i] - 128) / 128;
+      sum += dev * dev;
+    }
+    const rms = Math.sqrt(sum / bufferLength);
 
-  const stopped = new Promise((resolve, reject) => {
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data && event.data.size > 0) {
-        chunks.push(event.data);
+    // Dynamic scale feedback for Frutiger Aero Bubble Orb
+    if (running && mediaRecorder && mediaRecorder.state === "recording") {
+      const scale = 1 + rms * 3.8;
+      const opacity = Math.min(0.9, 0.25 + rms * 5);
+      orbBtn.style.transform = `scale(${scale})`;
+      orbGlow.style.transform = `scale(${scale * 1.35})`;
+      orbGlow.style.opacity = `${opacity}`;
+    }
+
+    const now = Date.now();
+    if (rms > vadThreshold) {
+      if (!isSpeaking) {
+        isSpeaking = true;
+        speechDetected = true;
       }
-    });
+      silenceStart = null;
+    } else {
+      if (isSpeaking) {
+        if (!silenceStart) {
+          silenceStart = now;
+        } else if (now - silenceStart > silenceDuration) {
+          isSpeaking = false;
+          silenceStart = null;
+          stopAndProcessTurn();
+          return;
+        }
+      }
+    }
 
-    recorder.addEventListener("error", (event) => {
-      reject(event.error || new Error("Recording failed."));
-    });
-
-    recorder.addEventListener("stop", () => {
-      const finalMimeType = recorder.mimeType || mimeType || "audio/webm";
-      resolve({
-        blob: new Blob(chunks, { type: finalMimeType }),
-        mimeType: finalMimeType,
-      });
-    });
-  });
-
-  setStatus(`Listening... (${TURN_SECONDS}s turn)`, "listening");
-  recorder.start(250);
-  const endedBy = await Promise.race([
-    sleep(durationMs).then(() => "timer"),
-    stopped.then(() => "stopped"),
-  ]);
-
-  if (endedBy === "timer" && recorder.state !== "inactive") {
-    recorder.stop();
+    vadAnimationId = requestAnimationFrame(checkAudio);
   }
 
-  const result = await stopped;
-  if (activeRecorder === recorder) {
-    activeRecorder = null;
-  }
-  return result;
+  checkAudio();
 }
 
-async function speakWithBrowser(text) {
-  const cleaned = (text || "").trim();
-  if (!cleaned || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
-    return false;
+function stopVadLoop() {
+  if (vadAnimationId) {
+    cancelAnimationFrame(vadAnimationId);
+    vadAnimationId = null;
+  }
+  orbBtn.style.transform = "";
+  orbGlow.style.transform = "";
+  orbGlow.style.opacity = "";
+}
+
+// ----------------------------------------------------
+// Audio Recording & API Calls
+// ----------------------------------------------------
+
+async function ensureMic() {
+  if (!micStream) {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
   }
 
-  setStatus("Speaking (browser fallback)...", "speaking");
-  const voices = window.speechSynthesis.getVoices();
-  const preferred = voices.find((voice) => /^en(-|_)/i.test(voice.lang)) || voices[0];
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    micSource.connect(analyser);
+  }
+}
 
+async function startRecordingTurn() {
+  if (!running) return;
+
+  try {
+    await ensureMic();
+    audioChunks = [];
+    
+    let mimeType = "audio/webm";
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+      mimeType = "audio/webm;codecs=opus";
+    } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+      mimeType = "audio/mp4";
+    }
+
+    mediaRecorder = new MediaRecorder(micStream, { mimeType });
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = () => {
+      stopVadLoop();
+      if (!running) return;
+
+      const audioBlob = new Blob(audioChunks, { type: mimeType });
+      if (speechDetected && audioBlob.size > 2000) {
+        processTurn(audioBlob, mimeType);
+      } else {
+        addTimelineItem("sys", "No speech detected. Listening again...");
+        startRecordingTurn();
+      }
+    };
+
+    setOrbState("listening");
+    mediaRecorder.start(200);
+    startVadLoop();
+
+  } catch (err) {
+    console.error("Mic access failed:", err);
+    addTimelineItem("sys", "Microphone access failed: " + err.message);
+    stopConversation();
+    setOrbState("error");
+  }
+}
+
+function stopAndProcessTurn() {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
+  }
+}
+
+async function processTurn(audioBlob, mimeType) {
+  setOrbState("working");
+  
+  const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+  const formData = new FormData();
+  formData.append("file", audioBlob, `voice.${ext}`);
+
+  const engine = getSelectedTtsEngine();
+
+  try {
+    const response = await fetch(`/talk?session_id=${sessionId}&tts_engine=${engine}`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server status ${response.status}`);
+    }
+
+    const payload = await response.json();
+    
+    if (!payload.transcript || !payload.transcript.trim()) {
+      addTimelineItem("sys", "No speech detected in query.");
+      startRecordingTurn();
+      return;
+    }
+
+    // Timeline Logging
+    addTimelineItem("user", payload.transcript);
+    addTimelineItem("bot", payload.roast);
+
+    // Update Dashboard Analysis
+    dashboardEmptyState.style.display = "none";
+    dashboardContent.style.display = "flex";
+    cardRoast.textContent = `"${payload.roast}"`;
+    
+    let hasCorrection = false;
+    if (payload.original_error) {
+      cardOriginal.textContent = payload.original_error;
+      cardOriginal.parentElement.style.display = "flex";
+      hasCorrection = true;
+    } else {
+      cardOriginal.parentElement.style.display = "none";
+    }
+
+    if (payload.correction) {
+      cardCorrection.textContent = payload.correction;
+      cardCorrection.parentElement.style.display = "flex";
+      hasCorrection = true;
+    } else {
+      cardCorrection.parentElement.style.display = "none";
+    }
+
+    cardExplanation.textContent = payload.explanation || "Your grammar was flawless. Absolutely unimpressed.";
+    cardChallenge.textContent = payload.challenge || "Move on.";
+
+    // Trigger Notification badge if right sidebar is closed
+    if (hasCorrection && !feedbackSidebar.classList.contains("open")) {
+      feedbackDot.style.display = "inline-block";
+    }
+
+    // Play TTS response
+    await playTTS(payload);
+
+  } catch (err) {
+    console.error("Pipeline turn error:", err);
+    addTimelineItem("sys", "Failed to get reply: " + err.message);
+    setOrbState("error");
+    running = false;
+  }
+}
+
+// ----------------------------------------------------
+// TTS Outputs
+// ----------------------------------------------------
+
+async function playTTS(payload) {
+  if (!running) return;
+  setOrbState("speaking");
+
+  const engine = getSelectedTtsEngine();
+
+  if (engine === "browser") {
+    await speakWithBrowser(payload.roast, payload.correction, payload.challenge);
+  } else {
+    if (payload.audio_base64) {
+      const mime = payload.audio_mime || "audio/wav";
+      const blob = base64ToBlob(payload.audio_base64, mime);
+      const url = URL.createObjectURL(blob);
+      replyAudioEl.src = url;
+
+      await new Promise((resolve) => {
+        replyAudioEl.onended = () => {
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+        replyAudioEl.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+        replyAudioEl.play().catch(resolve);
+      });
+    } else {
+      console.warn("TTS base64 missing, falling back to browser synthesis.");
+      await speakWithBrowser(payload.roast, payload.correction, payload.challenge);
+    }
+  }
+
+  // Next loop turn
+  if (running) {
+    startRecordingTurn();
+  } else {
+    setOrbState("idle");
+  }
+}
+
+function speakWithBrowser(roast, correction, challenge) {
   return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(cleaned);
+    if (!("speechSynthesis" in window)) {
+      resolve();
+      return;
+    }
+
+    let text = roast || "";
+    if (correction) {
+      text += `. You should say: ${correction}.`;
+    }
+    if (challenge) {
+      text += ` ${challenge}`;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = ttsSpeed;
+    
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find((v) => v.lang.startsWith("en-US") && v.name.includes("Google")) ||
+                      voices.find((v) => v.lang.startsWith("en-")) ||
+                      voices[0];
+    
     if (preferred) {
       utterance.voice = preferred;
     }
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
 
-    utterance.onend = () => resolve(true);
-    utterance.onerror = () => resolve(false);
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
 
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
   });
 }
 
-async function playReply(payload, replyText) {
-  if (payload.audio_base64) {
-    const replyBlob = base64ToBlob(payload.audio_base64, "audio/wav");
-    if (lastAudioUrl) {
-      URL.revokeObjectURL(lastAudioUrl);
-    }
-    lastAudioUrl = URL.createObjectURL(replyBlob);
-    replyAudioEl.src = lastAudioUrl;
-
-    setStatus("Speaking...", "speaking");
-    await new Promise((resolve) => {
-      replyAudioEl.onended = () => resolve();
-      replyAudioEl.onerror = () => resolve();
-      replyAudioEl.play().catch(() => resolve());
-    });
-    return;
-  }
-
-  const spoke = await speakWithBrowser(replyText);
-  if (!spoke && payload.audio_error) {
-    if (!hasShownAudioNotice) {
-      addTimeline("Audio", payload.audio_error);
-      hasShownAudioNotice = true;
-    }
-  }
-}
-
-async function processTurn(audioBlob, mimeType) {
-  setStatus("Transcribing and thinking...", "working");
-
-  const extension = mimeToExtension(mimeType);
-  const formData = new FormData();
-  formData.append("file", audioBlob, `voice.${extension}`);
-
-  const response = await fetch("/talk", {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const details = (await response.text()).slice(0, 280);
-    throw new Error(`Server returned ${response.status}. ${details}`);
-  }
-
-  const payload = await response.json();
-  const transcript = (payload.transcript || payload.user_text || "").trim();
-  const replyText = (payload.text || "").trim();
-
-  if (!transcript) {
-    addTimeline("System", "No speech detected in this turn.");
-    return;
-  }
-
-  userTextEl.classList.remove("placeholder");
-  userTextEl.textContent = transcript;
-
-  botTextEl.classList.remove("placeholder");
-  botTextEl.textContent = replyText || "No response text returned.";
-
-  addTimeline("You", transcript);
-  addTimeline("Assistant", replyText || "No response text returned.");
-
-  await playReply(payload, replyText);
-}
-
-function setControls(isRunning) {
-  startBtn.disabled = isRunning;
-  stopBtn.disabled = !isRunning;
-  startBtn.classList.toggle("running", isRunning);
-}
-
-async function conversationLoop() {
-  while (running) {
-    let turnRecording;
-    try {
-      turnRecording = await recordTurn(TURN_MS);
-    } catch (error) {
-      addTimeline("Error", error.message || "Recording failed.");
-      setStatus("Recording failed.", "error");
-      running = false;
-      break;
-    }
-
-    if (!running) {
-      break;
-    }
-
-    if (!turnRecording || !turnRecording.blob || turnRecording.blob.size < MIN_AUDIO_BYTES) {
-      addTimeline("System", "Too little audio captured. Listening again.");
-      continue;
-    }
-
-    try {
-      await processTurn(turnRecording.blob, turnRecording.mimeType);
-    } catch (error) {
-      addTimeline("Error", error.message || "Turn failed.");
-      setStatus("Turn failed. Retrying...", "error");
-      await sleep(600);
-    }
-  }
-
-  setControls(false);
-  setStatus("Idle", "idle");
-}
+// ----------------------------------------------------
+// Conversation Setup Activators
+// ----------------------------------------------------
 
 async function startConversation() {
-  if (running) {
-    return;
-  }
-
-  try {
-    await ensureMic();
-  } catch (error) {
-    setStatus("Microphone access failed.", "error");
-    addTimeline("Error", "Microphone permission was denied.");
-    return;
-  }
-
+  if (running) return;
   running = true;
-  setControls(true);
-  addTimeline("System", "Continuous conversation started.");
-  conversationLoop();
+  addTimelineItem("sys", "Gram Belle listening. Start speaking.");
+  startRecordingTurn();
 }
 
 function stopConversation() {
   running = false;
-  setStatus("Stopping...", "working");
-
-  if (activeRecorder && activeRecorder.state !== "inactive") {
-    activeRecorder.stop();
+  stopVadLoop();
+  
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
   }
 
   if ("speechSynthesis" in window) {
@@ -320,24 +551,21 @@ function stopConversation() {
   if (!replyAudioEl.paused) {
     replyAudioEl.pause();
   }
+
+  setOrbState("idle");
+  addTimelineItem("sys", "Gram Belle stopped.");
 }
 
-startBtn.addEventListener("click", () => {
-  startConversation();
-});
-
-stopBtn.addEventListener("click", () => {
-  stopConversation();
-});
-
-window.addEventListener("beforeunload", () => {
-  stopConversation();
-  if (micStream) {
-    for (const track of micStream.getTracks()) {
-      track.stop();
-    }
+// Click listener
+orbBtn.addEventListener("click", () => {
+  if (!running) {
+    startConversation();
+  } else {
+    stopConversation();
   }
 });
 
-setControls(false);
-setStatus("Idle", "idle");
+// Cache browser voices
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.getVoices();
+}

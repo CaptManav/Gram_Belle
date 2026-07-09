@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from brain_gemini import reply
+from brain import reply, clear_session_history
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
@@ -77,12 +77,10 @@ _xtts_speaker = None
 _xtts_init_error = ""
 _xtts_supports_speed = False
 
-
 def groq_headers():
     return {
         "Authorization": f"Bearer {GROQ_API_KEY}",
     }
-
 
 def resolve_suffix(upload: UploadFile) -> str:
     suffix = Path(upload.filename or "").suffix.lower()
@@ -91,7 +89,6 @@ def resolve_suffix(upload: UploadFile) -> str:
 
     content_type = (upload.content_type or "").split(";")[0].strip().lower()
     return SUFFIX_BY_CONTENT_TYPE.get(content_type, ".webm")
-
 
 def safe_unlink(path: str, retries: int = 8, delay_sec: float = 0.2) -> None:
     """
@@ -109,20 +106,17 @@ def safe_unlink(path: str, retries: int = 8, delay_sec: float = 0.2) -> None:
                 return
             time.sleep(delay_sec)
 
-
 def format_request_error(exc: requests.RequestException) -> str:
     detail = str(exc)
     if getattr(exc, "response", None) is not None and exc.response is not None:
         detail = f"{detail}. {exc.response.text[:280]}"
     return detail
 
-
 def clean_text_for_tts(text: str) -> str:
     cleaned = text
     for ch in ["*", "_", "#", "`"]:
         cleaned = cleaned.replace(ch, "")
     return cleaned.strip()
-
 
 def get_xtts():
     global _xtts_model, _xtts_speaker, _xtts_init_error, _xtts_supports_speed
@@ -170,7 +164,6 @@ def get_xtts():
             _xtts_init_error = f"Local XTTS init failed: {exc}"
             return None, "", _xtts_init_error
 
-
 def synthesize_local_xtts(reply_text: str) -> tuple[str, str]:
     model, speaker, err = get_xtts()
     if err:
@@ -202,19 +195,34 @@ def synthesize_local_xtts(reply_text: str) -> tuple[str, str]:
     finally:
         safe_unlink(out_path)
 
+async def synthesize_edge_tts(reply_text: str) -> tuple[str, str]:
+    try:
+        import edge_tts
+        
+        voice = "en-US-EmmaNeural"
+        communicate = edge_tts.Communicate(clean_text_for_tts(reply_text), voice)
+        
+        out_fd, out_path = tempfile.mkstemp(suffix=".mp3")
+        os.close(out_fd)
+        
+        try:
+            await communicate.save(out_path)
+            with open(out_path, "rb") as audio_file:
+                mp3_bytes = audio_file.read()
+            if not mp3_bytes:
+                return "", "Edge TTS returned empty audio."
+            return base64.b64encode(mp3_bytes).decode("utf-8"), ""
+        finally:
+            safe_unlink(out_path)
+    except Exception as exc:
+        return "", f"Edge TTS synthesis failed: {exc}"
 
 def synthesize_tts(reply_text: str) -> tuple[str, str]:
     """
-    Return (audio_base64, audio_error).
-    If TTS fails, return empty audio with a human-readable error.
+    Fallback legacy StreamElements cloud TTS.
     """
-    audio_b64, audio_error = synthesize_local_xtts(reply_text)
-    if audio_b64:
-        return audio_b64, ""
-
-    # Optional cloud fallback when local XTTS is unavailable.
     if not STREAMELEMENTS_API_KEY:
-        return "", audio_error or "Cloud TTS disabled: missing STREAMELEMENTS_API_KEY."
+        return "", "Cloud TTS disabled: missing STREAMELEMENTS_API_KEY."
 
     try:
         tts = requests.get(
@@ -229,27 +237,19 @@ def synthesize_tts(reply_text: str) -> tuple[str, str]:
         tts.raise_for_status()
         wav_bytes = tts.content
         if not wav_bytes:
-            fallback_error = "TTS provider returned empty audio."
-            if audio_error:
-                fallback_error = f"{audio_error} | {fallback_error}"
-            return "", fallback_error
+            return "", "TTS provider returned empty audio."
         return base64.b64encode(wav_bytes).decode("utf-8"), ""
     except requests.RequestException as exc:
-        cloud_error = f"TTS unavailable: {format_request_error(exc)}"
-        if audio_error:
-            cloud_error = f"{audio_error} | {cloud_error}"
-        return "", cloud_error
+        return "", f"TTS unavailable: {format_request_error(exc)}"
 
 def preload_xtts_background() -> None:
     if not USE_LOCAL_XTTS or not XTTS_PRELOAD_ON_START:
         return
 
     def _worker():
-        # Trigger one-time lazy init in background.
         get_xtts()
 
     threading.Thread(target=_worker, name="xtts-preload", daemon=True).start()
-
 
 @app.get("/")
 def home():
@@ -258,22 +258,27 @@ def home():
         raise HTTPException(status_code=404, detail="Frontend file not found.")
     return FileResponse(index_path)
 
-
 @app.get("/health")
 def health():
     return {"ok": True}
-
 
 @app.on_event("startup")
 def startup_event():
     preload_xtts_background()
 
+@app.post("/reset")
+def reset_session(session_id: str = "default"):
+    clear_session_history(session_id)
+    return {"ok": True}
 
 @app.post("/talk")
-async def talk(file: UploadFile = File(...)):
+async def talk(
+    file: UploadFile = File(...),
+    session_id: str = "default",
+    tts_engine: str = "browser"
+):
     in_path = None
     t0 = time.perf_counter()
-    t_stt = t0
 
     data = await file.read()
     await file.close()
@@ -302,12 +307,43 @@ async def talk(file: UploadFile = File(...)):
         user_text = stt.json()["text"]
         t_stt = time.perf_counter()
 
-        # 3) LLM reply - identical path used by agent_v1.py
-        reply_text = reply(user_text)
+        # 3) LLM reply
+        response_data = reply(user_text, session_id)
         t_llm = time.perf_counter()
 
-        # 4) Text-to-Speech (best-effort)
-        audio_b64, audio_error = synthesize_tts(reply_text)
+        roast = response_data.get("roast", "")
+        correction = response_data.get("correction", "")
+        challenge = response_data.get("challenge", "")
+
+        # Build text to speak (excluding explanation to keep voice output punchy)
+        read_parts = []
+        if roast:
+            read_parts.append(roast)
+        if correction:
+            read_parts.append(f"You should say: {correction}")
+        if challenge:
+            read_parts.append(challenge)
+        tts_text = " ".join(read_parts)
+
+        # 4) Text-to-Speech
+        audio_b64 = ""
+        audio_error = ""
+        audio_mime = ""
+
+        if tts_engine == "browser":
+            # Browser will synthesize text on the client side using Web Speech API
+            pass
+        elif tts_engine == "edge_tts":
+            audio_b64, audio_error = await synthesize_edge_tts(tts_text)
+            audio_mime = "audio/mpeg"
+        elif tts_engine == "local_xtts":
+            audio_b64, audio_error = synthesize_local_xtts(tts_text)
+            audio_mime = "audio/wav"
+        else:
+            # Server default fallback
+            audio_b64, audio_error = synthesize_tts(tts_text)
+            audio_mime = "audio/wav"
+
         t_tts = time.perf_counter()
 
         print(
@@ -315,14 +351,19 @@ async def talk(file: UploadFile = File(...)):
             f"llm={t_llm - t_stt:.2f}s "
             f"tts={t_tts - t_llm:.2f}s "
             f"total={t_tts - t0:.2f}s "
-            f"reply_chars={len(reply_text)} "
-            f"xtts_speed={XTTS_SPEED}"
+            f"engine={tts_engine} "
+            f"reply_chars={len(tts_text)}"
         )
 
         return {
             "transcript": user_text,
-            "text": reply_text,
+            "roast": roast,
+            "original_error": response_data.get("original_error", ""),
+            "correction": correction,
+            "explanation": response_data.get("explanation", ""),
+            "challenge": challenge,
             "audio_base64": audio_b64,
+            "audio_mime": audio_mime,
             "audio_error": audio_error,
         }
 
@@ -331,6 +372,5 @@ async def talk(file: UploadFile = File(...)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Audio pipeline failed: {exc}") from exc
     finally:
-        for path in [in_path]:
-            if path and os.path.exists(path):
-                safe_unlink(path)
+        if in_path and os.path.exists(in_path):
+            safe_unlink(in_path)
