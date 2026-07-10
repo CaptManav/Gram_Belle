@@ -569,3 +569,27 @@ orbBtn.addEventListener("click", () => {
 if ("speechSynthesis" in window) {
   window.speechSynthesis.getVoices();
 }
+
+// Check server status (e.g. if local XTTS is enabled)
+async function checkServerStatus() {
+  try {
+    const res = await fetch("/status");
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.local_xtts_enabled) {
+        // Find the Local XTTS radio option container and hide it
+        const xttsRadio = document.querySelector('input[name="tts_engine"][value="local_xtts"]');
+        if (xttsRadio) {
+          const optionContainer = xttsRadio.closest('label');
+          if (optionContainer) {
+            optionContainer.style.display = "none";
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to fetch server status:", err);
+  }
+}
+checkServerStatus();
+

@@ -262,6 +262,13 @@ def home():
 def health():
     return {"ok": True}
 
+@app.get("/status")
+def status():
+    return {
+        "local_xtts_enabled": USE_LOCAL_XTTS
+    }
+
+
 @app.on_event("startup")
 def startup_event():
     preload_xtts_background()
